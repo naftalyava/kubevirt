@@ -97,7 +97,7 @@ type inflightMigrationAborted struct {
 }
 
 func generateMigrationFlags(isBlockMigration, migratePaused bool, options *cmdclient.MigrationOptions) libvirt.DomainMigrateFlags {
-	migrateFlags := libvirt.MIGRATE_LIVE | libvirt.MIGRATE_PEER2PEER | libvirt.MIGRATE_PERSIST_DEST
+	migrateFlags := libvirt.MIGRATE_LIVE | libvirt.MIGRATE_PEER2PEER | libvirt.MIGRATE_PERSIST_DEST | libvirt.MIGRATE_PARALLEL
 
 	if isBlockMigration {
 		migrateFlags |= libvirt.MIGRATE_NON_SHARED_INC
@@ -732,33 +732,35 @@ func generateMigrationParams(dom cli.VirDomain, vmi *v1.VirtualMachineInstance, 
 		return nil, err
 	}
 
-	parallelMigrationSet := false
-	var parallelMigrationThreads int
+	// Always enable parallel migration
+	parallelMigrationThreads := 4 // Default value
 	if options.ParallelMigrationThreads != nil {
-		parallelMigrationSet = true
 		parallelMigrationThreads = int(*options.ParallelMigrationThreads)
 	}
 
 	key := migrationproxy.ConstructProxyKey(string(vmi.UID), migrationproxy.LibvirtDirectMigrationPort)
 	migrURI := fmt.Sprintf("unix://%s", migrationproxy.SourceUnixFile(virtShareDir, key))
 	params := &libvirt.DomainMigrateParameters{
-		URI:                    migrURI,
-		URISet:                 true,
-		Bandwidth:              bandwidth, // MiB/s
-		BandwidthSet:           bandwidth > 0,
-		DestXML:                xmlstr,
-		DestXMLSet:             true,
-		PersistXML:             xmlstr,
-		PersistXMLSet:          true,
-		ParallelConnectionsSet: parallelMigrationSet,
-		ParallelConnections:    parallelMigrationThreads,
+		URI:                     migrURI,
+		URISet:                  true,
+		Bandwidth:               bandwidth,
+		BandwidthSet:            bandwidth > 0,
+		DestXML:                 xmlstr,
+		DestXMLSet:              true,
+		PersistXML:              xmlstr,
+		PersistXMLSet:           true,
+		ParallelConnectionsSet:  true, // Always true
+		ParallelConnections:     parallelMigrationThreads,
+		CompressionSet:          false,
+		Compression:             "zlib",
+		CompressionZlibLevelSet: false,
+		CompressionZlibLevel:    3,
 	}
 
 	copyDisks := getDiskTargetsForMigration(dom, vmi)
 	if len(copyDisks) != 0 {
 		params.MigrateDisks = copyDisks
 		params.MigrateDisksSet = true
-		// add a socket for live block migration
 		key := migrationproxy.ConstructProxyKey(string(vmi.UID), migrationproxy.LibvirtBlockMigrationPort)
 		disksURI := fmt.Sprintf("unix://%s", migrationproxy.SourceUnixFile(virtShareDir, key))
 		params.DisksURI = disksURI
